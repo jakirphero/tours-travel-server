@@ -29,12 +29,12 @@ async function run() {
 
         const userCollection = client.db('toursTravelDb').collection('users');
         const bookingCollection = client.db('toursTravelDb').collection('bookings');
-
+        const servicesCollection = client.db('toursTravelDb').collection('services')
 
         //jwt api
         app.post("/jwt", async (req, res) => {
             const user = req.body;
-            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SEC, { expiresIn: '30m' });
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SEC, { expiresIn: '1h' });
             res.send({ token })
         })
 
@@ -52,13 +52,13 @@ async function run() {
             })
         }
         //veriFyAdmin after veriFyToken
-        const verifyAdmin = async (req, res, next)=> {
+        const verifyAdmin = async (req, res, next) => {
             const email = req.decoded.email;
-            const query = {email: email}
+            const query = { email: email }
             const user = await userCollection.findOne(query);
             const isAdmin = user?.role === 'admin'
-            if(!isAdmin){
-                return res.status(403).send({message: 'forbidden access'})
+            if (!isAdmin) {
+                return res.status(403).send({ message: 'forbidden access' })
             }
             next();
         }
@@ -101,10 +101,26 @@ async function run() {
             const result = await userCollection.updateOne(filter, updateDoc)
             res.send(result);
         });
-        app.delete("/users/:id", verifyToken, async (req, res) => {
+        app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) }
             const result = await userCollection.deleteOne(query);
+            res.send(result);
+        })
+        //services api
+        app.post("/services", verifyToken, verifyAdmin, async (req, res) => {
+            const tours = req.body;
+            const result = await servicesCollection.insertOne(tours);
+            res.send(result);
+        })
+        app.get("/services", verifyToken, verifyAdmin, async (req, res) => {
+            const result = await servicesCollection.find().toArray();
+            res.send(result)
+        });
+        app.delete("/services/:id", verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) }
+            const result = await servicesCollection.deleteOne(query);
             res.send(result);
         })
         //booking api
@@ -119,12 +135,21 @@ async function run() {
             const result = await bookingCollection.find(query).toArray();
             res.send(result)
         })
-        app.delete("/bookings/:id", async (req, res) => {
+        app.delete("/bookings/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await bookingCollection.deleteOne(query);
             res.send(result);
+        });
+
+        //state 
+
+        app.get("/admin-state", verifyToken, verifyAdmin, async(req, res)=>{
+            const allUser = await userCollection.estimatedDocumentCount();
+            const allPlace = await servicesCollection.estimatedDocumentCount();
+            res.send({allUser, allPlace})
         })
+
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
