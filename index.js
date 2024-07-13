@@ -4,7 +4,7 @@ const cors = require('cors')
 require('dotenv').config()
 const jwt = require('jsonwebtoken');
 const port = process.env.PORT || 5000
-
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 //middleware
 app.use(cors());
 app.use(express.json())
@@ -29,8 +29,8 @@ async function run() {
 
         const userCollection = client.db('toursTravelDb').collection('users');
         const bookingCollection = client.db('toursTravelDb').collection('bookings');
-        const servicesCollection = client.db('toursTravelDb').collection('services')
-
+        const servicesCollection = client.db('toursTravelDb').collection('services');
+        const paymentCollection = client.db('toursTravelDb').collection('payments');
         //jwt api
         app.post("/jwt", async (req, res) => {
             const user = req.body;
@@ -113,7 +113,7 @@ async function run() {
             const result = await servicesCollection.insertOne(tours);
             res.send(result);
         })
-        app.get("/services", verifyToken, verifyAdmin, async (req, res) => {
+        app.get("/services", async (req, res) => {
             const result = await servicesCollection.find().toArray();
             res.send(result)
         });
@@ -142,12 +142,41 @@ async function run() {
             res.send(result);
         });
 
+        //payment
+        app.post("/create-payment-intent", async (req, res) => {
+            const { price } = req.body;
+            const amount = parseInt(price * 100)
+            console.log(amount, 'amount intent inside')
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: 'usd',
+                payment_method_types: [
+                    "card"
+                ]
+            })
+            res.send({
+                clientSecret: paymentIntent.client_secret,
+            })
+        });
+
+        app.post("/payments", async (req, res) => {
+            const payment = req.body;
+            const result = await paymentCollection.insertOne(payment);
+            const query = {
+                _id: {
+                    $in: payment.bookingId.map(id => new ObjectId(id))
+                }
+            }
+            const deleteResult = await bookingCollection.deleteMany(query);
+            res.send({ result, deleteResult })
+        })
+
         //state 
 
-        app.get("/admin-state", verifyToken, verifyAdmin, async(req, res)=>{
+        app.get("/admin-state", verifyToken, verifyAdmin, async (req, res) => {
             const allUser = await userCollection.estimatedDocumentCount();
             const allPlace = await servicesCollection.estimatedDocumentCount();
-            res.send({allUser, allPlace})
+            res.send({ allUser, allPlace })
         })
 
         // Send a ping to confirm a successful connection
