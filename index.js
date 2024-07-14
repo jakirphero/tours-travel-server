@@ -146,7 +146,7 @@ async function run() {
         app.post("/create-payment-intent", async (req, res) => {
             const { price } = req.body;
             const amount = parseInt(price * 100)
-            console.log(amount, 'amount intent inside')
+            
             const paymentIntent = await stripe.paymentIntents.create({
                 amount: amount,
                 currency: 'usd',
@@ -171,12 +171,99 @@ async function run() {
             res.send({ result, deleteResult })
         })
 
+        app.get("/payments", verifyToken, verifyAdmin, async (req, res) => {
+            const result = await paymentCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.patch("/payments/confirm/:id", verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: {
+                    status: 'confirm'
+                }
+            };
+            const result = await paymentCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+
+        app.get("/payments/:email", verifyToken, async (req, res) => {
+            const query = { email: req.params.email };
+            if (req.params.email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const result = await paymentCollection.find(query).toArray();
+            res.send(result);
+        })
+
+        app.delete("/payments/:id", async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await paymentCollection.deleteOne(query);
+            res.send(result);
+        })
         //state 
 
         app.get("/admin-state", verifyToken, verifyAdmin, async (req, res) => {
             const allUser = await userCollection.estimatedDocumentCount();
             const allPlace = await servicesCollection.estimatedDocumentCount();
-            res.send({ allUser, allPlace })
+            const allBooking = await paymentCollection.estimatedDocumentCount();
+
+            const result = await paymentCollection.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        totalAmount: {
+                            $sum: '$price'
+                        }
+                    }
+                }
+            ]).toArray();
+
+            const amount = result.length > 0 ? result[0].totalAmount : [0];
+
+            res.send({ allUser, allPlace, allBooking, amount })
+        });
+
+        //order state
+
+        app.get("/order-stats", verifyToken, verifyAdmin, async (req, res) => {
+            const result = await paymentCollection.aggregate([
+                {
+                    $unwind: '$itemId'
+                },
+                { $addFields: { itemId: { $toObjectId: '$itemId' } } },
+                {
+                    $lookup: {
+                        from: 'services',
+                        localField: 'itemId',
+                        foreignField: '_id',
+                        as: 'bookingItems'
+                    }
+                },
+                {
+                    $unwind: '$bookingItems'
+                },
+                {
+                    $group: {
+                        _id: '$bookingItems.category',
+                        quantity: { $sum: 1 },
+                        amount: { $sum: '$bookingItems.price' }
+                    }
+                },
+                {
+                    $project: {
+                        _id: 0,
+                        category: '$_id',
+                        quantity: '$quantity',
+                        amount: '$amount'
+                    }
+                }
+
+            ]).toArray();
+            res.send(result);
         })
 
         // Send a ping to confirm a successful connection
